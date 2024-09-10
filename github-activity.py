@@ -58,7 +58,7 @@ def fetch_repo_events(username: str, repo: str, event_type: str):
 
     url = f"https://api.github.com/repos/{OWNER}/{repo}/comments"
 
-    if event_type == "IssueCommentEvent":
+    if event_type == "IssueCommentEvent" or event_type == "IssuesEvent":
         url = f"https://api.github.com/repos/{OWNER}/{repo}/issues"
 
     try:
@@ -82,6 +82,10 @@ def fetch_repo_events(username: str, repo: str, event_type: str):
             for event in filtered_events:
                 output += f"  - Added {event['comments']} comments on issue: {event['title']}\n-------------------------------------\n"
             print(output)
+        elif event_type == "IssuesEvent":
+            filtered_events = [event for event in events if event['assignee']['login'] == username]
+            output = f"IssuesEvent Activity:\n{username} has {len(filtered_events)} open issues"
+            print(output)
 
     except requests.exceptions.HTTPError as http_err:
         if response.status_code == 404:
@@ -99,7 +103,6 @@ def fetch_public_events(username: str, event_type: str):
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        # "Authorization": f"Bearer {GITHUB_FINE_GRAINED_TOKEN}"
     }
     url = f"https://api.github.com/users/{username}/events"
 
@@ -131,9 +134,40 @@ def fetch_public_events(username: str, event_type: str):
                     output += f"  - Forked {event['repo']['name']} into {event['payload']['forkee']['name']} at {event['created_at']}\n"
                 elif event["type"] == "GollumEvent":
                     output += f"  - Created {len(event['payload']['pages'])} wiki pages in {event['repo']['name']}"
+                elif event["type"] == "PushEvent":
+                    output += f"  - Pushed {len(event['payload']['commits'])} commits to {event['repo']['name']}.\n"
                 else:
-                    print(event)
+                    print(f"TODO: Handle event of type {event['type']}")
             print(output)
+
+    except requests.exceptions.HTTPError as http_err:
+        if response.status_code == 404:
+            LOGGER.error(f"User '{username}' not found. Please check the username and try again.")
+        elif response.status_code == 403 and 'X-RateLimit-Remaining' in response.headers and response.headers['X-RateLimit-Remaining'] == '0':
+            LOGGER.error("Error: Rate limit exceeded. Please try again later.")
+        else:
+            LOGGER.error(f"HTTP error occurred: {http_err}")
+    except requests.exceptions.RequestException as req_err:
+        LOGGER.error(f"Network error occurred: {req_err}")
+    except Exception as e:
+        LOGGER.error(f"An unexpected error occurred: {e}")
+
+def check_membership(username: str, repo: str):
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Authorization": f"Bearer {GITHUB_FINE_GRAINED_TOKEN}"
+    }
+    url = f"https://api.github.com/repos/{OWNER}/{repo}/collaborators/{username}/permission"
+
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+
+        events = response.json()
+
+        output = f" - {username} has {events['permission']} permission for this repository."
+        print(output)
 
     except requests.exceptions.HTTPError as http_err:
         if response.status_code == 404:
@@ -161,16 +195,10 @@ if __name__ == "__main__":
             "ForkEvent",
             "GollumEvent",
             "IssueCommentEvent", #token #owner
-            # "IssuesEvent",
-            "MemberEvent",
+            "IssuesEvent", #token #owner
+            "MemberEvent", #token #owner
             "PublicEvent",
-            "PullRequestReviewEvent",
-            "PullRequestReviewCommentEvent",
-            "PullRequestReviewThreadEvent",
-            "PushEvent",
-            "ReleaseEvent",
-            "SponsorshipEvent",
-            "WatchEvent"
+            "PushEvent"
         ],
         type=str,
         default="all",
@@ -180,10 +208,18 @@ if __name__ == "__main__":
     parser.add_argument("-r", "--repo", type=str, required=False, help="Repository username")
 
     args = parser.parse_args()
-    if args.event_type in ["CommitCommentEvent", "IssueCommentEvent"]:
+    if args.event_type in ["CommitCommentEvent", "IssueCommentEvent", "IssuesEvent"]:
         if not args.repo:
             LOGGER.warning("CommitCommentEvent endpoints require a repository name. Try `python github-activity.py -u <username> -e <event_type> -r <repository_name>`")
             sys.exit(1)
         fetch_repo_events(args.user, args.repo, args.event_type)
+    elif args.event_type == "MemberEvent":
+        if not args.repo:
+            LOGGER.warning("MemberEvent endpoints require a repository name. Try `python github-activity.py -u <username> -e <event_type> -r <repository_name>`")
+            sys.exit(1)
+        check_membership(args.user, args.repo)
+    elif args.event_type == "PublicEvent":
+        print("Congratulations! You just lost a few seconds of your life on this event. This particular event returns an empty payload object, and according to the Github Docs, it's \"Without a doubt: the best event on GitHub.\".")
     else:
         fetch_public_events(args.user, args.event_type)
+
