@@ -50,6 +50,7 @@ source venv/bin/activate
 ```
 
 4. Setup environment variables
+
 You need to provide the following environment variables in a `.env` file in the root of the project:
 ```bash
 GITHUB_FINE_GRAINED_TOKEN=<your-github-fine-grained-token>
